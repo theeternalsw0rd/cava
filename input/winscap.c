@@ -62,6 +62,57 @@ static void downmix_to_stereo_s16(const int16_t *src, int16_t *dst, size_t frame
     }
 }
 
+// Helper: Convert 3 bytes (little-endian) to signed 32-bit (20-bit audio)
+static inline int32_t s20_to_s32(const uint8_t *p) {
+    int32_t val = p[0] | (p[1] << 8) | (p[2] << 16);
+    val &= 0xFFFFF; // Mask to 20 bits
+    // Sign-extend if negative
+    if (val & 0x80000)
+        val |= ~0xFFFFF;
+    return val;
+}
+
+// Downmix interleaved 20-bit PCM to stereo
+static void downmix_to_stereo_s20(const uint8_t *src, int16_t *dst, size_t frames, int channels) {
+    size_t i;
+    for (i = 0; i < frames; ++i) {
+        int left = 0, right = 0;
+        const uint8_t *frame = src + i * channels * 3;
+        if (channels >= 2) {
+            left += s20_to_s32(frame + 0 * 3) >> 4;
+            right += s20_to_s32(frame + 1 * 3) >> 4;
+        }
+        if (channels >= 3) {
+            int32_t c = s20_to_s32(frame + 2 * 3) >> 4;
+            left += (int)(c * 0.7f);
+            right += (int)(c * 0.7f);
+        }
+        if (channels >= 5) {
+            int32_t c4 = s20_to_s32(frame + 4 * 3) >> 4;
+            int32_t c5 = s20_to_s32(frame + 5 * 3) >> 4;
+            left += (int)(c4 * 0.7f);
+            right += (int)(c5 * 0.7f);
+        }
+        if (channels >= 7) {
+            int32_t c6 = s20_to_s32(frame + 6 * 3) >> 4;
+            int32_t c7 = s20_to_s32(frame + 7 * 3) >> 4;
+            left += (int)(c6 * 0.7f);
+            right += (int)(c7 * 0.7f);
+        }
+        // Clip to int16_t
+        if (left > 32767)
+            left = 32767;
+        if (left < -32768)
+            left = -32768;
+        if (right > 32767)
+            right = 32767;
+        if (right < -32768)
+            right = -32768;
+        dst[i * 2 + 0] = (int16_t)left;
+        dst[i * 2 + 1] = (int16_t)right;
+    }
+}
+
 // Helper to convert 3 bytes (little-endian) to signed 32-bit int
 static inline int32_t s24_to_s32(const uint8_t *p) {
     int32_t val = p[0] | (p[1] << 8) | (p[2] << 16);
@@ -327,9 +378,12 @@ void process_multichannel(UINT32 numFramesAvailable, const WAVEFORMATEX format, 
 	} else if (format.wBitsPerSample == 32) {
 		downmix_to_stereo_s32((const int32_t *)pData, stereo_buffer,
 							  numFramesAvailable, format.nChannels);
-	} else if (format.wBitsPerSample == 24) {
-		downmix_to_stereo_s24((const uint8_t *)pData, stereo_buffer,
-							  numFramesAvailable, format.nChannels);
+    } else if (format.wBitsPerSample == 24) {
+        downmix_to_stereo_s24((const uint8_t *)pData, stereo_buffer, numFramesAvailable,
+                              format.nChannels);
+    } else if (format.wBitsPerSample == 20) {
+        downmix_to_stereo_s20((const uint8_t *)pData, stereo_buffer, numFramesAvailable,
+                              format.nChannels);
 	} else if (format.wBitsPerSample == 16) {
 		downmix_to_stereo_s16((const int16_t *)pData, stereo_buffer,
 							  numFramesAvailable, format.nChannels);
